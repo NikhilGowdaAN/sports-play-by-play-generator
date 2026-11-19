@@ -934,14 +934,14 @@ def milestone_4(corpus_text: str | None = None, steps: int = 20, embed_dim: int 
     return MilestoneResult({
         "model": model,
         "tokenizer": tokenizer,
-        "initial_loss": float(initial_loss),
-        "final_loss": float(final_loss),
-        "loss_reduction": float(initial_loss - final_loss),
+        "initial_loss": float(initial_loss.detach() if hasattr(initial_loss, "detach") else initial_loss),
+        "final_loss": float(final_loss.detach() if hasattr(final_loss, "detach") else final_loss),
+        "loss_reduction": float((initial_loss - final_loss).detach() if hasattr(initial_loss, "detach") else (initial_loss - final_loss)),
         "losses": [float(l) for l in losses],
         "trained_steps": steps,
         "vocab_size": actual_vocab_size,
         "embed_dim": embed_dim,
-        "training_verified": (final_loss < initial_loss),
+        "training_verified": bool(final_loss < initial_loss),
     })
 
 

@@ -294,7 +294,7 @@ def test_milestone_4():
     assert len(res["losses"]) == 15
     assert res["initial_loss"] > 0
     assert res["final_loss"] > 0
-    assert res["training_verified"] is True
+    assert bool(res["training_verified"]) is True
     assert res["final_loss"] < res["initial_loss"], f"Expected loss drop: {res['final_loss']} < {res['initial_loss']}"
     assert res["loss_reduction"] > 0.5, f"Expected noticeable reduction, got {res['loss_reduction']}"
 
