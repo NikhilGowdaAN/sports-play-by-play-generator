@@ -5,6 +5,7 @@ from app.core import (
     milestone_2,
     milestone_3,
     milestone_4,
+    milestone_5,
     get_corpus_stats,
     BPETokenizer,
     SportsEmbeddings,
@@ -40,6 +41,12 @@ def main(argv: list[str] | None = None) -> None:
     train_parser = sub.add_parser("train", help="train the sports GPT model on commentary text")
     train_parser.add_argument("--steps", type=int, default=15, help="number of training optimization steps")
     train_parser.add_argument("--lr", type=float, default=0.08, help="learning rate")
+
+    gen_parser = sub.add_parser("generate", help="generate dynamic sports commentary from a scenario prompt")
+    gen_parser.add_argument("prompt", help="scenario prompt (e.g. 'Marcus Vance with seconds left')")
+    gen_parser.add_argument("--tokens", type=int, default=25, help="number of new commentary tokens to generate")
+    gen_parser.add_argument("--temp", type=float, default=0.7, help="sampling temperature")
+    gen_parser.add_argument("--top-k", type=int, default=10, help="top-k sampling filter")
 
     args = parser.parse_args(argv)
     if args.command == "hello":
@@ -105,6 +112,22 @@ def main(argv: list[str] | None = None) -> None:
         print(f"  Final Loss:        {m4['final_loss']:.4f}")
         print(f"  Loss Reduction:    {m4['loss_reduction']:.4f}")
         print(f"  Training Status:   {'PASSED (loss decreased)' if m4['training_verified'] else 'FAILED'}")
+    elif args.command == "generate":
+        print(f"Generating commentary for scenario: '{args.prompt}'...")
+        res = milestone_5(
+            prompt=args.prompt,
+            max_new_tokens=args.tokens,
+            temperature=args.temp,
+            top_k=args.top_k,
+        )
+        print("Sports Commentary Generation:")
+        print(f"  Prompt:                '{res['prompt']}'")
+        print(f"  Generated Tokens:      {res['new_tokens_count']}")
+        print(f"  Temperature / Top-k:   {res['temperature']} / {res['top_k']}")
+        print("\nGenerated Commentary:")
+        print("-" * 50)
+        print(res["generated_text"])
+        print("-" * 50)
 
 
 if __name__ == "__main__":

@@ -24,6 +24,8 @@ from app.core import (
     SimpleTensor,
     milestone_4,
     SportsGPT,
+    milestone_5,
+    generate_commentary,
 )
 
 
@@ -365,9 +367,68 @@ def test_cli_train_command(capsys):
 
 
 # Milestone 5: Develop a text generation function to produce short commentary snippets.
-@pytest.mark.skip(reason="remove this line when you start milestone 5")
 def test_milestone_5():
-    raise NotImplementedError("write the test for milestone 5")
+    """Verify that milestone 5 generates dynamic sports commentary snippets."""
+    prompt = "Marcus Vance drives into the lane"
+    res = milestone_5(prompt=prompt, max_new_tokens=20, temperature=0.7, top_k=10)
+    assert "generated_text" in res
+    assert "continuation" in res
+    assert "tokens" in res
+    assert "new_tokens" in res
+    assert res["new_tokens_count"] == 20
+    assert bool(res["generation_verified"]) is True
+    assert res["generated_text"].startswith(prompt)
+    assert len(res["continuation"]) > 0
+
+
+def test_text_generation_greedy_determinism():
+    """Verify that greedy sampling (temperature=0.0) produces deterministic output."""
+    m4 = milestone_4(steps=10)
+    model = m4["model"]
+    tokenizer = m4["tokenizer"]
+    prompt = "Fast break opportunity"
+
+    out1 = generate_commentary(model, tokenizer, prompt, max_new_tokens=15, temperature=0.0)
+    out2 = generate_commentary(model, tokenizer, prompt, max_new_tokens=15, temperature=0.0)
+    assert out1 == out2, f"Greedy generation must be deterministic: '{out1}' vs '{out2}'"
+
+
+def test_text_generation_with_temperature_and_top_k():
+    """Verify generation works across various temperatures and top_k filters."""
+    m4 = milestone_4(steps=5)
+    model = m4["model"]
+    tokenizer = m4["tokenizer"]
+    prompt = "Stoppage time corner kick"
+
+    out_high_temp = generate_commentary(model, tokenizer, prompt, max_new_tokens=12, temperature=1.2, top_k=5)
+    assert out_high_temp.startswith(prompt)
+    assert len(out_high_temp) > len(prompt)
+
+    out_no_topk = generate_commentary(model, tokenizer, prompt, max_new_tokens=12, temperature=0.8, top_k=None)
+    assert out_no_topk.startswith(prompt)
+
+
+def test_text_generation_context_window_crop():
+    """Verify generation correctly truncates prompts longer than max_len without crashing."""
+    tok = BPETokenizer()
+    tok.train("Defense offense rebound pass shoot", vocab_size=265)
+    vocab_size = len(tok.vocab)
+    model = SportsGPT(vocab_size=vocab_size, embed_dim=16, num_heads=2, num_layers=1, max_len=20)
+
+    # Prompt with 30 tokens > max_len 20
+    long_prompt_tokens = [1] * 30
+    gen_tokens = model.generate(long_prompt_tokens, max_new_tokens=5, temperature=0.0)
+    # Total tokens = 30 prompt + 5 new = 35
+    assert len(gen_tokens) == 35
+
+
+def test_cli_generate_command(capsys):
+    from app.cli import main
+    main(["generate", "Vance pulls up from downtown", "--tokens", "10", "--temp", "0.7"])
+    out = capsys.readouterr().out
+    assert "Sports Commentary Generation:" in out
+    assert "Prompt:" in out
+    assert "Generated Commentary:" in out
 
 
 # Milestone 6: Create a CLI where users can input a prompt and receive generated commentary.

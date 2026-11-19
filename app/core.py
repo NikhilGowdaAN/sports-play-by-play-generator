@@ -1038,6 +1038,58 @@ if HAS_TORCH:
             data = json.loads(Path(file_path).read_text(encoding="utf-8"))
             return cls.from_dict(data)
 
+        @torch.no_grad()
+        def generate(
+            self,
+            prompt_tokens: list[int] | torch.Tensor,
+            max_new_tokens: int = 30,
+            temperature: float = 0.7,
+            top_k: int | None = 10,
+            eos_token: int | None = None,
+            seed: int | None = None,
+        ) -> list[int]:
+            """Autoregressively generate next tokens given prompt tokens."""
+            self.eval()
+            if seed is not None:
+                torch.manual_seed(seed)
+            if isinstance(prompt_tokens, SimpleTensor):
+                prompt_tokens = prompt_tokens.data
+            if isinstance(prompt_tokens, list):
+                if not prompt_tokens:
+                    prompt_tokens = [0]
+                idx = torch.tensor([prompt_tokens], dtype=torch.long)
+            elif isinstance(prompt_tokens, torch.Tensor):
+                idx = prompt_tokens if prompt_tokens.ndim == 2 else prompt_tokens.unsqueeze(0)
+            else:
+                idx = torch.tensor([[int(t) for t in prompt_tokens]], dtype=torch.long)
+
+            for _ in range(max_new_tokens):
+                idx_cond = idx if idx.size(1) <= self.max_len else idx[:, -self.max_len:]
+                logits = self(idx_cond)
+                logits = logits[:, -1, :]
+
+                if temperature <= 0.0 or temperature < 1e-4:
+                    idx_next = torch.argmax(logits, dim=-1, keepdim=True)
+                else:
+                    logits = logits / temperature
+                    if top_k is not None and top_k > 0:
+                        k = min(top_k, logits.size(-1))
+                        v, _ = torch.topk(logits, k)
+                        logits[logits < v[:, [-1]]] = -float("Inf")
+                    probs = torch.nn.functional.softmax(logits, dim=-1)
+                    probs = torch.nan_to_num(probs, nan=1.0 / self.vocab_size)
+                    if probs.sum() == 0:
+                        probs.fill_(1.0 / self.vocab_size)
+                    probs = probs / probs.sum(dim=-1, keepdim=True)
+                    idx_next = torch.multinomial(probs, num_samples=1)
+
+                idx = torch.cat((idx, idx_next), dim=1)
+                next_id = int(idx_next.item())
+                if eos_token is not None and next_id == eos_token:
+                    break
+
+            return idx[0].tolist()
+
 else:
     class SportsGPT:
         """Full GPT model for sports commentary generation built from scratch."""
@@ -1189,13 +1241,128 @@ else:
             data = json.loads(Path(file_path).read_text(encoding="utf-8"))
             return cls.from_dict(data)
 
+        def generate(
+            self,
+            prompt_tokens: list[int] | SimpleTensor,
+            max_new_tokens: int = 30,
+            temperature: float = 0.7,
+            top_k: int | None = 10,
+            eos_token: int | None = None,
+            seed: int | None = None,
+        ) -> list[int]:
+            """Autoregressively generate next tokens given prompt tokens from scratch."""
+            raw_tokens = prompt_tokens.data if isinstance(prompt_tokens, SimpleTensor) else prompt_tokens
+            if raw_tokens and isinstance(raw_tokens[0], list):
+                raw_tokens = raw_tokens[0]
+            curr_tokens = list(raw_tokens) if raw_tokens else [0]
+            rng = random.Random(seed if seed is not None else 42)
+
+            for _ in range(max_new_tokens):
+                cond_tokens = curr_tokens if len(curr_tokens) <= self.max_len else curr_tokens[-self.max_len:]
+                logits_tensor = self.forward([cond_tokens])
+                raw_logits = logits_tensor.data[0][-1]
+
+                if temperature <= 0.0 or temperature < 1e-4:
+                    next_id = max(range(self.vocab_size), key=lambda v: raw_logits[v])
+                else:
+                    scaled = [val / temperature for val in raw_logits]
+                    if top_k is not None and top_k > 0 and top_k < self.vocab_size:
+                        sorted_vals = sorted(scaled, reverse=True)
+                        cutoff = sorted_vals[top_k - 1]
+                        scaled = [s if s >= cutoff else -1e9 for s in scaled]
+                    probs = softmax_1d(scaled)
+                    next_id = rng.choices(range(self.vocab_size), weights=probs, k=1)[0]
+
+                curr_tokens.append(next_id)
+                if eos_token is not None and next_id == eos_token:
+                    break
+
+            return curr_tokens
+
 
 # ==============================================================================
 # --- Milestone 5: Develop a text generation function to produce short commentary snippets.
 # Hint: Text generation.
 # ==============================================================================
-def milestone_5():  # TODO(milestone 5)
-    raise NotImplementedError("TODO(milestone 5)")
+
+def generate_commentary(
+    model: SportsGPT,
+    tokenizer: BPETokenizer,
+    prompt: str = "Marcus Vance",
+    max_new_tokens: int = 30,
+    temperature: float = 0.7,
+    top_k: int | None = 10,
+    eos_token: int | None = None,
+    seed: int | None = None,
+) -> str:
+    """Generate dynamic sports play-by-play commentary from a prompt."""
+    prompt_tokens = tokenizer.encode(prompt)
+    if not prompt_tokens:
+        prompt_tokens = [0]
+    all_tokens = model.generate(
+        prompt_tokens,
+        max_new_tokens=max_new_tokens,
+        temperature=temperature,
+        top_k=top_k,
+        eos_token=eos_token,
+        seed=seed,
+    )
+    return tokenizer.decode(all_tokens)
+
+
+def milestone_5(
+    prompt: str = "Marcus Vance with the clock winding down",
+    model: SportsGPT | None = None,
+    tokenizer: BPETokenizer | None = None,
+    max_new_tokens: int = 30,
+    temperature: float = 0.7,
+    top_k: int | None = 10,
+    seed: int | None = None,
+) -> MilestoneResult:
+    """Milestone 5: Develop a text generation function to produce short commentary snippets.
+
+    1. Loads trained sports GPT model and BPE tokenizer (from Milestone 4 or provided).
+    2. Encodes the sports scenario prompt into token IDs.
+    3. Autoregressively generates next tokens using temperature scaling and top-k sampling.
+    4. Decodes the generated token stream back into commentary text.
+    5. Returns detailed generation outputs and metrics.
+    """
+    if model is None or tokenizer is None:
+        m4 = milestone_4(steps=15)
+        model = m4["model"]
+        tokenizer = m4["tokenizer"]
+
+    prompt_tokens = tokenizer.encode(prompt)
+    if not prompt_tokens:
+        prompt_tokens = [0]
+
+    all_tokens = model.generate(
+        prompt_tokens=prompt_tokens,
+        max_new_tokens=max_new_tokens,
+        temperature=temperature,
+        top_k=top_k,
+        seed=seed,
+    )
+
+    full_text = tokenizer.decode(all_tokens)
+    new_tokens = all_tokens[len(prompt_tokens):]
+    continuation = tokenizer.decode(new_tokens)
+
+    return MilestoneResult({
+        "prompt": prompt,
+        "prompt_tokens": prompt_tokens,
+        "tokens": all_tokens,
+        "new_tokens": new_tokens,
+        "new_tokens_count": len(new_tokens),
+        "generated_text": full_text,
+        "commentary": full_text,
+        "continuation": continuation,
+        "temperature": temperature,
+        "top_k": top_k,
+        "model": model,
+        "tokenizer": tokenizer,
+        "generation_verified": bool(len(new_tokens) > 0 and len(full_text) >= len(prompt)),
+    })
 
 
 # ==============================================================================

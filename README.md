@@ -22,7 +22,7 @@ Tick these off as you go, and commit after each one.
       Hint: Causal self-attention and transformer block assembly.
 - [x] **4. Train the GPT model using the sports text data.**  
       Hint: Model training.
-- [ ] **5. Develop a text generation function to produce short commentary snippets.**  
+- [x] **5. Develop a text generation function to produce short commentary snippets.**  
       Hint: Text generation.
 - [ ] **6. Create a CLI where users can input a prompt and receive generated commentary.**  
       Hint: Applying text generation in a CLI.
