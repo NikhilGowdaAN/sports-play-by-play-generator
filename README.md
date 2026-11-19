@@ -24,7 +24,7 @@ Tick these off as you go, and commit after each one.
       Hint: Model training.
 - [x] **5. Develop a text generation function to produce short commentary snippets.**  
       Hint: Text generation.
-- [ ] **6. Create a CLI where users can input a prompt and receive generated commentary.**  
+- [x] **6. Create a CLI where users can input a prompt and receive generated commentary.**  
       Hint: Applying text generation in a CLI.
 
 ## Run it

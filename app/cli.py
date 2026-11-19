@@ -6,6 +6,7 @@ from app.core import (
     milestone_3,
     milestone_4,
     milestone_5,
+    milestone_6,
     get_corpus_stats,
     BPETokenizer,
     SportsEmbeddings,
@@ -47,6 +48,18 @@ def main(argv: list[str] | None = None) -> None:
     gen_parser.add_argument("--tokens", type=int, default=25, help="number of new commentary tokens to generate")
     gen_parser.add_argument("--temp", type=float, default=0.7, help="sampling temperature")
     gen_parser.add_argument("--top-k", type=int, default=10, help="top-k sampling filter")
+
+    commentate_parser = sub.add_parser("commentate", help="generate play-by-play commentary for fictional game scenarios")
+    commentate_parser.add_argument("prompt", nargs="?", default=None, help="fictional game scenario (leave empty for interactive assistant)")
+    commentate_parser.add_argument("--tokens", type=int, default=30, help="number of commentary tokens to generate")
+    commentate_parser.add_argument("--temp", type=float, default=0.7, help="sampling temperature")
+    commentate_parser.add_argument("--top-k", type=int, default=10, help="top-k sampling filter")
+    commentate_parser.add_argument("--interactive", action="store_true", help="start an interactive continuous commentary session")
+
+    assistant_parser = sub.add_parser("assistant", help="interactive command-line sports commentary assistant")
+    assistant_parser.add_argument("--tokens", type=int, default=30, help="number of commentary tokens to generate")
+    assistant_parser.add_argument("--temp", type=float, default=0.7, help="sampling temperature")
+    assistant_parser.add_argument("--top-k", type=int, default=10, help="top-k sampling filter")
 
     args = parser.parse_args(argv)
     if args.command == "hello":
@@ -128,6 +141,28 @@ def main(argv: list[str] | None = None) -> None:
         print("-" * 50)
         print(res["generated_text"])
         print("-" * 50)
+    elif args.command in ("commentate", "assistant"):
+        is_interactive = (args.command == "assistant") or getattr(args, "interactive", False) or (getattr(args, "prompt", None) is None)
+        if is_interactive:
+            milestone_6(
+                interactive=True,
+                max_new_tokens=args.tokens,
+                temperature=args.temp,
+                top_k=args.top_k,
+            )
+        else:
+            print(f"Generating play-by-play commentary for: '{args.prompt}'...")
+            res = milestone_6(
+                prompt=args.prompt,
+                max_new_tokens=args.tokens,
+                temperature=args.temp,
+                top_k=args.top_k,
+                interactive=False,
+            )
+            print("Play-by-play Commentary:")
+            print("-" * 50)
+            print(res["generated_text"])
+            print("-" * 50)
 
 
 if __name__ == "__main__":

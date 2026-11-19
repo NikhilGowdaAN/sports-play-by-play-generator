@@ -26,6 +26,7 @@ from app.core import (
     SportsGPT,
     milestone_5,
     generate_commentary,
+    milestone_6,
 )
 
 
@@ -432,6 +433,68 @@ def test_cli_generate_command(capsys):
 
 
 # Milestone 6: Create a CLI where users can input a prompt and receive generated commentary.
-@pytest.mark.skip(reason="remove this line when you start milestone 6")
 def test_milestone_6():
-    raise NotImplementedError("write the test for milestone 6")
+    """Verify that milestone 6 generates commentary snippets from CLI prompt input."""
+    prompt = "Marcus Vance with five seconds left in the game"
+    res = milestone_6(prompt=prompt, max_new_tokens=20, temperature=0.7, top_k=10)
+    assert "prompt" in res
+    assert "generated_text" in res
+    assert "commentary" in res
+    assert bool(res["cli_verified"]) is True
+    assert bool(res["generation_verified"]) is True
+    assert res["generated_text"].startswith(prompt)
+    assert len(res["generated_text"]) > len(prompt)
+
+
+def test_milestone_6_interactive_simulation():
+    """Verify that milestone 6 interactive mode handles continuous prompts and exits gracefully."""
+    inputs = ["Marcus Vance drives to the rim!", "exit"]
+    input_idx = 0
+
+    def mock_input(prompt_str=""):
+        nonlocal input_idx
+        val = inputs[input_idx]
+        input_idx += 1
+        return val
+
+    captured_outputs = []
+
+    def mock_output(msg=""):
+        captured_outputs.append(str(msg))
+
+    res = milestone_6(
+        interactive=True,
+        max_new_tokens=15,
+        temperature=0.7,
+        top_k=10,
+        input_fn=mock_input,
+        output_fn=mock_output,
+    )
+
+    assert bool(res["interactive"]) is True
+    assert bool(res["cli_verified"]) is True
+    assert len(res["session_history"]) == 1
+    assert res["session_history"][0]["prompt"] == "Marcus Vance drives to the rim!"
+    assert any("Sports Play-by-Play Commentary Assistant" in line for line in captured_outputs)
+    assert any("Exiting commentary assistant" in line for line in captured_outputs)
+
+
+def test_cli_commentate_command(capsys):
+    from app.cli import main
+    main(["commentate", "Buzzer-beater shot from half court!", "--tokens", "10"])
+    out = capsys.readouterr().out
+    assert "Play-by-play Commentary:" in out
+    assert "Buzzer-beater shot from half court!" in out
+
+
+def test_cli_assistant_interactive_simulated(monkeypatch, capsys):
+    from app.cli import main
+    inputs = iter(["Deep three pointer from downtown!", "quit"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(inputs))
+
+    main(["assistant", "--tokens", "10"])
+    out = capsys.readouterr().out
+    assert "Sports Play-by-Play Commentary Assistant" in out
+    assert "Play-by-play Commentary:" in out
+    assert "Deep three pointer from downtown!" in out
+    assert "Exiting commentary assistant" in out

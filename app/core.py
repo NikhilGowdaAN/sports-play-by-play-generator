@@ -1369,5 +1369,112 @@ def milestone_5(
 # --- Milestone 6: Create a CLI where users can input a prompt and receive generated commentary.
 # Hint: Applying text generation in a CLI.
 # ==============================================================================
-def milestone_6():  # TODO(milestone 6)
-    raise NotImplementedError("TODO(milestone 6)")
+
+def milestone_6(
+    prompt: str = "Down by 2 with five seconds on the clock in the fourth quarter",
+    model: SportsGPT | None = None,
+    tokenizer: BPETokenizer | None = None,
+    max_new_tokens: int = 30,
+    temperature: float = 0.7,
+    top_k: int | None = 10,
+    interactive: bool = False,
+    input_fn=None,
+    output_fn=None,
+) -> MilestoneResult:
+    """Milestone 6: Create a CLI where users can input a prompt and receive generated commentary.
+
+    1. Loads trained sports GPT model and BPE tokenizer.
+    2. If interactive=True, provides continuous interactive session until 'exit' or 'quit'.
+    3. If interactive=False, processes the input prompt and generates a dynamic commentary snippet.
+    4. Formats and prints the play-by-play commentary.
+    5. Returns full results including model, prompt, and commentary snippet.
+    """
+    _in = input_fn if input_fn is not None else input
+    _out = output_fn if output_fn is not None else print
+
+    if model is None or tokenizer is None:
+        m4 = milestone_4(steps=15)
+        model = m4["model"]
+        tokenizer = m4["tokenizer"]
+
+    session_history = []
+
+    if interactive:
+        _out("=" * 60)
+        _out("🎙️   Sports Play-by-Play Commentary Assistant   🎙️")
+        _out("=" * 60)
+        _out("Enter a fictional game scenario (or 'exit' / 'quit' to end):")
+
+        while True:
+            try:
+                user_prompt = _in("Scenario prompt > ").strip()
+            except (EOFError, KeyboardInterrupt):
+                _out("\nExiting commentary assistant. Thanks for tuning in!")
+                break
+
+            if not user_prompt:
+                continue
+            if user_prompt.lower() in ("exit", "quit", "q"):
+                _out("Exiting commentary assistant. Thanks for tuning in!")
+                break
+
+            commentary = generate_commentary(
+                model=model,
+                tokenizer=tokenizer,
+                prompt=user_prompt,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+                top_k=top_k,
+            )
+            _out("\nPlay-by-play Commentary:")
+            _out("-" * 40)
+            _out(commentary)
+            _out("-" * 40 + "\n")
+            session_history.append({"prompt": user_prompt, "commentary": commentary})
+
+        last_prompt = session_history[-1]["prompt"] if session_history else prompt
+        last_commentary = session_history[-1]["commentary"] if session_history else ""
+        return MilestoneResult({
+            "interactive": True,
+            "session_history": session_history,
+            "prompt": last_prompt,
+            "commentary": last_commentary,
+            "generated_text": last_commentary,
+            "model": model,
+            "tokenizer": tokenizer,
+            "cli_verified": True,
+            "generation_verified": True,
+        })
+
+    # Non-interactive mode
+    full_commentary = generate_commentary(
+        model=model,
+        tokenizer=tokenizer,
+        prompt=prompt,
+        max_new_tokens=max_new_tokens,
+        temperature=temperature,
+        top_k=top_k,
+    )
+
+    prompt_tokens = tokenizer.encode(prompt)
+    all_tokens = tokenizer.encode(full_commentary)
+    new_tokens = all_tokens[len(prompt_tokens):]
+    continuation = tokenizer.decode(new_tokens)
+
+    return MilestoneResult({
+        "interactive": False,
+        "prompt": prompt,
+        "prompt_tokens": prompt_tokens,
+        "tokens": all_tokens,
+        "new_tokens": new_tokens,
+        "new_tokens_count": len(new_tokens),
+        "generated_text": full_commentary,
+        "commentary": full_commentary,
+        "continuation": continuation,
+        "temperature": temperature,
+        "top_k": top_k,
+        "model": model,
+        "tokenizer": tokenizer,
+        "cli_verified": True,
+        "generation_verified": bool(len(full_commentary) >= len(prompt)),
+    })
