@@ -836,8 +836,273 @@ else:
 # --- Milestone 4: Train the GPT model using the sports text data.
 # Hint: Model training.
 # ==============================================================================
-def milestone_4():  # TODO(milestone 4)
-    raise NotImplementedError("TODO(milestone 4)")
+
+def milestone_4(corpus_text: str | None = None, steps: int = 20, embed_dim: int = 32, num_heads: int = 4, num_layers: int = 1, lr: float = 0.08) -> dict:
+    """Milestone 4: Train the GPT model using the sports text data.
+
+    1. Loads or accepts the sports commentary corpus.
+    2. Trains the BPE tokenizer to build vocabulary.
+    3. Encodes the sports text into training sequences.
+    4. Initializes the full SportsGPT model (Embeddings + Transformer Blocks + LM Head).
+    5. Trains the model using autoregressive next-token prediction and cross-entropy loss.
+    6. Verifies that the training loss significantly decreases.
+    """
+    if corpus_text is None:
+        corpus_text = milestone_1()
+
+    # 1. Train or load BPE tokenizer on corpus
+    tokenizer = BPETokenizer()
+    tokenizer.train(corpus_text, vocab_size=300)
+    actual_vocab_size = len(tokenizer.vocab)
+
+    # 2. Encode corpus to tokens
+    tokens = tokenizer.encode(corpus_text)
+
+    # 3. Instantiate full SportsGPT model
+    model = SportsGPT(
+        vocab_size=actual_vocab_size,
+        embed_dim=embed_dim,
+        num_heads=num_heads,
+        num_layers=num_layers,
+        max_len=128,
+        seed=42,
+    )
+
+    # 4. Prepare training sequences (predict next token)
+    block_size = min(32, len(tokens) - 1)
+    x_train = tokens[:block_size]
+    y_train = tokens[1:block_size + 1]
+
+    # Evaluate initial loss before training
+    _, initial_loss = model.forward(x_train, targets=y_train)
+
+    # Train model across steps
+    losses = []
+    for step in range(steps):
+        loss_val = model.train_step(x_train, y_train, lr=lr)
+        losses.append(loss_val)
+
+    # Evaluate final loss on reference chunk
+    _, final_loss = model.forward(x_train, targets=y_train)
+
+    return {
+        "model": model,
+        "tokenizer": tokenizer,
+        "initial_loss": float(initial_loss),
+        "final_loss": float(final_loss),
+        "loss_reduction": float(initial_loss - final_loss),
+        "losses": [float(l) for l in losses],
+        "trained_steps": steps,
+        "vocab_size": actual_vocab_size,
+        "embed_dim": embed_dim,
+        "training_verified": (final_loss < initial_loss),
+    }
+
+
+if HAS_TORCH:
+    class SportsGPT(nn.Module):
+        """Full GPT model for sports commentary generation (PyTorch)."""
+
+        def __init__(self, vocab_size: int = 300, embed_dim: int = 64, num_heads: int = 4, num_layers: int = 2, max_len: int = 128, seed: int = 42):
+            super().__init__()
+            self.vocab_size = vocab_size
+            self.embed_dim = embed_dim
+            self.num_heads = num_heads
+            self.num_layers = num_layers
+            self.max_len = max_len
+
+            torch.manual_seed(seed)
+            self.embeddings = SportsEmbeddings(vocab_size, embed_dim, max_len=max_len, seed=seed)
+            self.blocks = nn.ModuleList([TransformerBlock(embed_dim, num_heads=num_heads, max_len=max_len, seed=seed + i) for i in range(num_layers)])
+            self.ln_f = nn.LayerNorm(embed_dim)
+            self.lm_head = nn.Linear(embed_dim, vocab_size, bias=True)
+            self.optimizer = torch.optim.AdamW(self.parameters(), lr=1e-3)
+
+        def forward(self, idx, targets=None):
+            if isinstance(idx, list):
+                if idx and isinstance(idx[0], int):
+                    idx = [idx]
+                idx = torch.tensor(idx, dtype=torch.long)
+            elif isinstance(idx, torch.Tensor) and idx.ndim == 1:
+                idx = idx.unsqueeze(0)
+
+            x = self.embeddings(idx)
+            for block in self.blocks:
+                x = block(x)
+            x = self.ln_f(x)
+            logits = self.lm_head(x)
+
+            if targets is None:
+                return logits
+
+            if isinstance(targets, list):
+                if targets and isinstance(targets[0], int):
+                    targets = [targets]
+                targets = torch.tensor(targets, dtype=torch.long)
+            elif isinstance(targets, torch.Tensor) and targets.ndim == 1:
+                targets = targets.unsqueeze(0)
+
+            loss = torch.nn.functional.cross_entropy(logits.view(-1, self.vocab_size), targets.view(-1))
+            return logits, loss
+
+        def train_step(self, x_tokens, y_targets, lr=1e-3):
+            self.train()
+            self.optimizer.zero_grad()
+            logits, loss = self.forward(x_tokens, targets=y_targets)
+            loss.backward()
+            self.optimizer.step()
+            return loss.item()
+
+else:
+    class SportsGPT:
+        """Full GPT model for sports commentary generation built from scratch."""
+
+        def __init__(self, vocab_size: int = 300, embed_dim: int = 32, num_heads: int = 4, num_layers: int = 1, max_len: int = 128, seed: int = 42):
+            self.vocab_size = vocab_size
+            self.embed_dim = embed_dim
+            self.num_heads = num_heads
+            self.num_layers = num_layers
+            self.max_len = max_len
+
+            self.embeddings = SportsEmbeddings(vocab_size, embed_dim, max_len=max_len, seed=seed)
+            self.blocks = [TransformerBlock(embed_dim, num_heads=num_heads, max_len=max_len, seed=seed + i) for i in range(num_layers)]
+            self.ln_f = LayerNorm(embed_dim)
+
+            rng = random.Random(seed + 99)
+            std = 0.02
+            self.w_head = [[rng.gauss(0, std) for _ in range(vocab_size)] for _ in range(embed_dim)]
+            self.b_head = [0.0] * vocab_size
+
+        def forward(self, idx: list | SimpleTensor, targets: list | SimpleTensor | None = None):
+            import math
+            raw_idx = idx.data if isinstance(idx, SimpleTensor) else idx
+            if isinstance(raw_idx[0], int):
+                raw_idx = [raw_idx]
+
+            B = len(raw_idx)
+            T = len(raw_idx[0])
+
+            # 1. Embeddings
+            x = self.embeddings(raw_idx)
+
+            # 2. Transformer blocks
+            for block in self.blocks:
+                x = block(x)
+
+            # 3. Final layer norm
+            x = self.ln_f(x)
+            raw_x = x.data if isinstance(x, SimpleTensor) else x
+
+            # 4. LM Head projection
+            all_logits = []
+            for b in range(B):
+                h_b = raw_x[b]  # (T, D)
+                logits_b = matmul_2d(h_b, self.w_head)
+                for t in range(T):
+                    for v in range(self.vocab_size):
+                        logits_b[t][v] += self.b_head[v]
+                all_logits.append(logits_b)
+
+            logits = SimpleTensor(all_logits)
+            if targets is None:
+                return logits
+
+            # Cross-Entropy Loss computation
+            raw_targets = targets.data if isinstance(targets, SimpleTensor) else targets
+            if isinstance(raw_targets[0], int):
+                raw_targets = [raw_targets]
+
+            total_loss = 0.0
+            total_tokens = 0
+            for b in range(B):
+                for t in range(T):
+                    y = raw_targets[b][t]
+                    probs = softmax_1d(all_logits[b][t])
+                    p_target = max(probs[y], 1e-12)
+                    total_loss += -math.log(p_target)
+                    total_tokens += 1
+
+            avg_loss = total_loss / max(total_tokens, 1)
+            return logits, avg_loss
+
+        def train_step(self, x_tokens: list, y_targets: list, lr: float = 0.08) -> float:
+            """Execute a single backpropagation training step on the sports text."""
+            if isinstance(x_tokens[0], int):
+                x_tokens = [x_tokens]
+            if isinstance(y_targets[0], int):
+                y_targets = [y_targets]
+
+            B = len(x_tokens)
+            T = len(x_tokens[0])
+            D = self.embed_dim
+            V = self.vocab_size
+
+            logits, loss = self.forward(x_tokens, targets=y_targets)
+            raw_logits = logits.data
+
+            x = self.embeddings(x_tokens)
+            for block in self.blocks:
+                x = block(x)
+            x = self.ln_f(x)
+            h = x.data
+
+            grad_w = [[0.0] * V for _ in range(D)]
+            grad_b = [0.0] * V
+            norm_factor = 1.0 / (B * T)
+
+            for b in range(B):
+                for t in range(T):
+                    probs = softmax_1d(raw_logits[b][t])
+                    y = y_targets[b][t]
+                    h_vec = h[b][t]
+
+                    for v in range(V):
+                        dz = (probs[v] - (1.0 if v == y else 0.0)) * norm_factor
+                        grad_b[v] += dz
+                        for d in range(D):
+                            grad_w[d][v] += h_vec[d] * dz
+
+            for d in range(D):
+                for v in range(V):
+                    self.w_head[d][v] -= lr * grad_w[d][v]
+            for v in range(V):
+                self.b_head[v] -= lr * grad_b[v]
+
+            return loss
+
+        def to_dict(self) -> dict:
+            return {
+                "vocab_size": self.vocab_size,
+                "embed_dim": self.embed_dim,
+                "num_heads": self.num_heads,
+                "num_layers": self.num_layers,
+                "max_len": self.max_len,
+                "w_head": self.w_head,
+                "b_head": self.b_head,
+            }
+
+        @classmethod
+        def from_dict(cls, data: dict) -> "SportsGPT":
+            m = cls(
+                vocab_size=data["vocab_size"],
+                embed_dim=data["embed_dim"],
+                num_heads=data["num_heads"],
+                num_layers=data["num_layers"],
+                max_len=data["max_len"],
+            )
+            m.w_head = data["w_head"]
+            m.b_head = data["b_head"]
+            return m
+
+        def save(self, file_path: str | Path) -> None:
+            path = Path(file_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(self.to_dict()), encoding="utf-8")
+
+        @classmethod
+        def load(cls, file_path: str | Path) -> "SportsGPT":
+            data = json.loads(Path(file_path).read_text(encoding="utf-8"))
+            return cls.from_dict(data)
 
 
 # ==============================================================================

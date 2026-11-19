@@ -22,6 +22,8 @@ from app.core import (
     LayerNorm,
     TransformerBlock,
     SimpleTensor,
+    milestone_4,
+    SportsGPT,
 )
 
 
@@ -283,9 +285,83 @@ def test_cli_transformer_command(capsys):
 
 
 # Milestone 4: Train the GPT model using the sports text data.
-@pytest.mark.skip(reason="remove this line when you start milestone 4")
 def test_milestone_4():
-    raise NotImplementedError("write the test for milestone 4")
+    """Verify that milestone 4 trains SportsGPT and reduces cross-entropy loss."""
+    res = milestone_4(steps=15, embed_dim=32, num_heads=4, lr=0.08)
+    assert "model" in res
+    assert "tokenizer" in res
+    assert "losses" in res
+    assert len(res["losses"]) == 15
+    assert res["initial_loss"] > 0
+    assert res["final_loss"] > 0
+    assert res["training_verified"] is True
+    assert res["final_loss"] < res["initial_loss"], f"Expected loss drop: {res['final_loss']} < {res['initial_loss']}"
+    assert res["loss_reduction"] > 0.5, f"Expected noticeable reduction, got {res['loss_reduction']}"
+
+
+def test_sports_gpt_forward_shape_and_loss():
+    """Verify SportsGPT forward pass output shape and loss computation."""
+    vocab_size = 280
+    embed_dim = 32
+    model = SportsGPT(vocab_size=vocab_size, embed_dim=embed_dim, num_heads=4, num_layers=1, max_len=64)
+
+    # Forward without targets
+    tokens = [1, 5, 20, 100, 250, 279]
+    logits = model.forward(tokens)
+    assert logits.shape == (1, 6, vocab_size)
+
+    # Forward with targets
+    targets = [5, 20, 100, 250, 279, 1]
+    logits_with_loss, loss = model.forward(tokens, targets=targets)
+    assert logits_with_loss.shape == (1, 6, vocab_size)
+    assert loss > 0.0, f"Cross-entropy loss should be positive, got {loss}"
+
+
+def test_sports_gpt_training_decreases_loss():
+    """Verify that train_step updates model parameters and decreases cross-entropy loss."""
+    vocab_size = 270
+    embed_dim = 32
+    model = SportsGPT(vocab_size=vocab_size, embed_dim=embed_dim, num_heads=2, num_layers=1, max_len=32)
+
+    x = [2, 10, 15, 80, 200, 256, 12, 45]
+    y = [10, 15, 80, 200, 256, 12, 45, 2]
+
+    _, initial_loss = model.forward(x, targets=y)
+    for _ in range(12):
+        model.train_step(x, y, lr=0.1)
+    _, final_loss = model.forward(x, targets=y)
+
+    assert final_loss < initial_loss, f"Loss should decrease: {final_loss} < {initial_loss}"
+    assert (initial_loss - final_loss) > 1.0, f"Expected significant loss reduction: {initial_loss - final_loss}"
+
+
+def test_sports_gpt_save_and_load(tmp_path):
+    """Verify SportsGPT weights serialization and deserialization."""
+    vocab_size = 265
+    embed_dim = 32
+    model = SportsGPT(vocab_size=vocab_size, embed_dim=embed_dim, num_heads=2, num_layers=1, max_len=32)
+
+    file_path = tmp_path / "sports_gpt_model.json"
+    model.save(file_path)
+
+    loaded_model = SportsGPT.load(file_path)
+    sample_tokens = [1, 2, 3, 4]
+    out_orig = model.forward(sample_tokens)
+    out_loaded = loaded_model.forward(sample_tokens)
+
+    # Assert outputs are identical
+    diff = sum(abs(out_orig[0, 0, v] - out_loaded[0, 0, v]) for v in range(vocab_size))
+    assert diff < 1e-6, f"Loaded model output mismatch: diff={diff}"
+
+
+def test_cli_train_command(capsys):
+    from app.cli import main
+    main(["train", "--steps", "5"])
+    out = capsys.readouterr().out
+    assert "Model Training on Sports Corpus:" in out
+    assert "Initial Loss:" in out
+    assert "Final Loss:" in out
+    assert "PASSED" in out
 
 
 # Milestone 5: Develop a text generation function to produce short commentary snippets.

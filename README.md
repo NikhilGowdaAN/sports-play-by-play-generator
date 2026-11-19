@@ -20,7 +20,7 @@ Tick these off as you go, and commit after each one.
       Hint: Byte-pair tokenizer and embeddings.
 - [x] **3. Build the causal self-attention mechanism and assemble the transformer block.**  
       Hint: Causal self-attention and transformer block assembly.
-- [ ] **4. Train the GPT model using the sports text data.**  
+- [x] **4. Train the GPT model using the sports text data.**  
       Hint: Model training.
 - [ ] **5. Develop a text generation function to produce short commentary snippets.**  
       Hint: Text generation.
