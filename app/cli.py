@@ -1,6 +1,14 @@
 """Command-line entry point: `python -m app.cli --help`."""
 import argparse
-from app.core import milestone_1, milestone_2, get_corpus_stats, BPETokenizer, SportsEmbeddings
+from app.core import (
+    milestone_1,
+    milestone_2,
+    milestone_3,
+    get_corpus_stats,
+    BPETokenizer,
+    SportsEmbeddings,
+    TransformerBlock,
+)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -21,6 +29,11 @@ def main(argv: list[str] | None = None) -> None:
     embed_parser = sub.add_parser("embed", help="generate token and positional embeddings for sports text")
     embed_parser.add_argument("text", help="sports commentary text to embed")
     embed_parser.add_argument("--embed-dim", type=int, default=64, help="embedding dimension")
+
+    transformer_parser = sub.add_parser("transformer", help="pass sports text through causal attention and transformer block")
+    transformer_parser.add_argument("text", help="sports commentary text to process")
+    transformer_parser.add_argument("--embed-dim", type=int, default=64, help="embedding dimension")
+    transformer_parser.add_argument("--heads", type=int, default=4, help="number of attention heads")
 
     args = parser.parse_args(argv)
     if args.command == "hello":
@@ -60,6 +73,21 @@ def main(argv: list[str] | None = None) -> None:
         print(f"Token count:      {len(tokens)}")
         print(f"Embedding shape:  {emb.shape}")
         print(f"Embedding vector dimension: {args.embed_dim}")
+    elif args.command == "transformer":
+        m2 = milestone_2(embed_dim=args.embed_dim)
+        tokenizer = m2["tokenizer"]
+        embeddings = m2["embeddings"]
+        tokens = tokenizer.encode(args.text)
+        emb = embeddings(tokens)
+        m3 = milestone_3(embeddings_input=emb, embed_dim=args.embed_dim, num_heads=args.heads)
+        print("Transformer Block Forward Pass:")
+        print(f"  Input text:        '{args.text}'")
+        print(f"  Token count:       {len(tokens)}")
+        print(f"  Embedding shape:   {m3['input_shape']}")
+        print(f"  Output shape:      {m3['output_shape']}")
+        print(f"  Attention heads:   {m3['num_heads']}")
+        print(f"  Causal masking:    {'PASSED (strict causality)' if m3['causal_mask_verified'] else 'FAILED'}")
+        print(f"  Residual check:    {'PASSED (dimension preserved)' if m3['residual_verified'] else 'FAILED'}")
 
 
 if __name__ == "__main__":

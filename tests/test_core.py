@@ -16,6 +16,12 @@ from app.core import (
     TokenEmbedding,
     PositionalEmbedding,
     SportsEmbeddings,
+    milestone_3,
+    CausalSelfAttention,
+    MLP,
+    LayerNorm,
+    TransformerBlock,
+    SimpleTensor,
 )
 
 
@@ -177,9 +183,103 @@ def test_cli_tokenize_and_embed_commands(capsys):
 
 
 # Milestone 3: Build the causal self-attention mechanism and assemble the transformer block.
-@pytest.mark.skip(reason="remove this line when you start milestone 3")
 def test_milestone_3():
-    raise NotImplementedError("write the test for milestone 3")
+    """Verify causal self-attention and transformer block forward pass."""
+    res = milestone_3(embed_dim=32, num_heads=4)
+    assert "block" in res
+    assert "attention" in res
+    assert "input_embeddings" in res
+    assert "block_output" in res
+    assert res["causal_mask_verified"] is True
+    assert res["residual_verified"] is True
+    assert res["input_shape"] == res["output_shape"]
+    assert res["output_shape"][-1] == 32
+
+
+def test_causal_self_attention_strict_masking():
+    """Verify that upper-triangular weights in causal self-attention are strictly zero."""
+    d_model = 32
+    num_heads = 4
+    T = 6
+    attn = CausalSelfAttention(d_model=d_model, num_heads=num_heads)
+    # Mock sequence: (1, T, d_model)
+    dummy_input = SimpleTensor([[[float(i + k) for k in range(d_model)] for i in range(T)]])
+    out, weights = attn.forward(dummy_input, return_weights=True)
+
+    assert out.shape == (1, T, d_model)
+    w_list = weights.tolist() if hasattr(weights, "tolist") else weights
+    # For every head, for every row i, future columns j > i must have weight 0.0
+    for head_w in w_list[0]:
+        for i in range(T):
+            for j in range(T):
+                if j > i:
+                    assert head_w[i][j] == 0.0, f"Future leakage detected at ({i}, {j})"
+            # Lower triangular weights must sum to 1.0 (valid probability distribution)
+            row_sum = sum(head_w[i][:i + 1])
+            assert abs(row_sum - 1.0) < 1e-5, f"Softmax row {i} does not sum to 1.0: {row_sum}"
+
+
+def test_causality_future_token_invariance():
+    """Verify that changing a future token has zero effect on earlier token outputs."""
+    d_model = 16
+    num_heads = 2
+    T = 4
+    attn = CausalSelfAttention(d_model=d_model, num_heads=num_heads)
+
+    seq_a = [[1.0] * d_model, [2.0] * d_model, [3.0] * d_model, [4.0] * d_model]
+    seq_b = [[1.0] * d_model, [2.0] * d_model, [3.0] * d_model, [999.0] * d_model]  # change only last token
+
+    out_a = attn.forward(SimpleTensor([seq_a]))
+    out_b = attn.forward(SimpleTensor([seq_b]))
+
+    # Positions 0, 1, 2 must be identical
+    for pos in range(3):
+        for d in range(d_model):
+            diff = abs(out_a[0, pos, d] - out_b[0, pos, d])
+            assert diff < 1e-6, f"Position {pos} leaked future information: diff={diff}"
+
+    # Position 3 must be different
+    diff_last = sum(abs(out_a[0, 3, d] - out_b[0, 3, d]) for d in range(d_model))
+    assert diff_last > 1.0, "Position 3 was expected to change"
+
+
+def test_transformer_block_forward_and_residual():
+    """Verify transformer block executes Pre-LN attention + MLP and preserves dimensionality."""
+    d_model = 32
+    num_heads = 4
+    block = TransformerBlock(d_model=d_model, num_heads=num_heads)
+
+    dummy_input = SimpleTensor([[[float(t + d * 0.1) for d in range(d_model)] for t in range(8)]])
+    out = block.forward(dummy_input)
+
+    assert out.shape == (1, 8, d_model)
+    # Ensure transformation took place (output differs from raw input)
+    diff = sum(abs(out[0, 0, d] - dummy_input[0, 0, d]) for d in range(d_model))
+    assert diff > 0.01, "Transformer block should perform non-trivial transformation"
+
+
+def test_layer_norm():
+    """Verify LayerNorm normalizes mean to 0 and variance to 1."""
+    d_model = 16
+    ln = LayerNorm(d_model=d_model)
+    raw_vec = [float(i * 3 + 5) for i in range(d_model)]
+    normed = ln.forward(SimpleTensor([[raw_vec]]))
+
+    mean = sum(normed[0, 0, d] for d in range(d_model)) / d_model
+    var = sum((normed[0, 0, d] - mean) ** 2 for d in range(d_model)) / d_model
+
+    assert abs(mean) < 1e-4, f"LayerNorm mean should be ~0, got {mean}"
+    assert abs(var - 1.0) < 1e-3, f"LayerNorm variance should be ~1, got {var}"
+
+
+def test_cli_transformer_command(capsys):
+    from app.cli import main
+    main(["transformer", "Vance drives to the lane!"])
+    out = capsys.readouterr().out
+    assert "Transformer Block Forward Pass:" in out
+    assert "Output shape:" in out
+    assert "Causal masking:    PASSED" in out
+    assert "Residual check:    PASSED" in out
 
 
 # Milestone 4: Train the GPT model using the sports text data.

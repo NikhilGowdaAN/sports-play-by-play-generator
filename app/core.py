@@ -478,8 +478,358 @@ else:
 # --- Milestone 3: Build the causal self-attention mechanism and assemble the transformer block.
 # Hint: Causal self-attention and transformer block assembly.
 # ==============================================================================
-def milestone_3():  # TODO(milestone 3)
-    raise NotImplementedError("TODO(milestone 3)")
+
+def milestone_3(embeddings_input=None, embed_dim: int = 64, num_heads: int = 4) -> dict:
+    """Milestone 3: Build the causal self-attention mechanism and assemble the transformer block.
+
+    1. Loads sports commentary embeddings from Milestone 2 (or uses provided embeddings).
+    2. Constructs CausalSelfAttention with strict upper-triangular masking.
+    3. Assembles the TransformerBlock (Pre-LN LayerNorm + Multi-Head Attention + MLP + Residuals).
+    4. Computes forward pass over sports embeddings and verifies causal attention properties.
+    """
+    if embeddings_input is None:
+        m2 = milestone_2(embed_dim=embed_dim)
+        embeddings_input = m2["sample_embeddings"]
+
+    # Instantiate attention mechanism and transformer block
+    attention = CausalSelfAttention(d_model=embed_dim, num_heads=num_heads)
+    block = TransformerBlock(d_model=embed_dim, num_heads=num_heads)
+
+    # 1. Forward pass through Causal Self-Attention
+    attn_out, attn_weights = attention.forward(embeddings_input, return_weights=True)
+
+    # 2. Forward pass through complete Transformer Block
+    block_out = block.forward(embeddings_input)
+
+    # Verify causal masking: future positions j > i must have exactly 0.0 attention weight
+    causal_mask_verified = True
+    w_list = attn_weights.tolist() if hasattr(attn_weights, "tolist") else attn_weights
+    for head_w in w_list[0]:
+        T = len(head_w)
+        for i in range(T):
+            for j in range(i + 1, T):
+                if head_w[i][j] > 1e-6:
+                    causal_mask_verified = False
+                    break
+
+    input_shape = getattr(embeddings_input, "shape", (len(embeddings_input), len(embeddings_input[0]), len(embeddings_input[0][0])))
+    output_shape = getattr(block_out, "shape", (len(block_out), len(block_out[0]), len(block_out[0][0])))
+
+    return {
+        "block": block,
+        "attention": attention,
+        "input_embeddings": embeddings_input,
+        "attention_output": attn_out,
+        "attention_weights": attn_weights,
+        "block_output": block_out,
+        "input_shape": input_shape,
+        "output_shape": output_shape,
+        "embed_dim": embed_dim,
+        "num_heads": num_heads,
+        "causal_mask_verified": causal_mask_verified,
+        "residual_verified": (input_shape == output_shape),
+    }
+
+
+def gelu(x: float) -> float:
+    """Gaussian Error Linear Unit (GELU) activation function."""
+    import math
+    return 0.5 * x * (1.0 + math.tanh(math.sqrt(2.0 / math.pi) * (x + 0.044715 * (x ** 3))))
+
+
+def matmul_2d(A: list[list[float]], B: list[list[float]]) -> list[list[float]]:
+    """Multiply 2D matrices A (N, K) and B (K, M) -> (N, M)."""
+    N = len(A)
+    K = len(A[0])
+    M = len(B[0])
+    out = [[0.0] * M for _ in range(N)]
+    for i in range(N):
+        for k in range(K):
+            a_ik = A[i][k]
+            if a_ik == 0.0:
+                continue
+            for j in range(M):
+                out[i][j] += a_ik * B[k][j]
+    return out
+
+
+def softmax_1d(row: list[float]) -> list[float]:
+    """Numerically stable softmax over a 1D vector."""
+    import math
+    max_val = max(row)
+    exps = [math.exp(x - max_val) for x in row]
+    s = sum(exps)
+    return [e / s for e in exps] if s > 0 else [1.0 / len(row)] * len(row)
+
+
+if HAS_TORCH:
+    class LayerNorm(nn.Module):
+        """Layer Normalization layer (PyTorch)."""
+
+        def __init__(self, d_model: int, eps: float = 1e-5):
+            super().__init__()
+            self.ln = nn.LayerNorm(d_model, eps=eps)
+
+        def forward(self, x):
+            return self.ln(x)
+
+    class CausalSelfAttention(nn.Module):
+        """Multi-head Causal Self-Attention mechanism (PyTorch)."""
+
+        def __init__(self, d_model: int = 64, num_heads: int = 4, max_len: int = 512, seed: int = 42):
+            super().__init__()
+            assert d_model % num_heads == 0, "d_model must be divisible by num_heads"
+            self.d_model = d_model
+            self.num_heads = num_heads
+            self.d_k = d_model // num_heads
+
+            torch.manual_seed(seed)
+            self.c_attn = nn.Linear(d_model, 3 * d_model)
+            self.c_proj = nn.Linear(d_model, d_model)
+
+            mask = torch.tril(torch.ones(max_len, max_len)).view(1, 1, max_len, max_len)
+            self.register_buffer("bias", mask)
+
+        def forward(self, x, return_weights: bool = False):
+            import math
+            if isinstance(x, SimpleTensor):
+                x = torch.tensor(x.data, dtype=torch.float32)
+            elif isinstance(x, list):
+                x = torch.tensor(x, dtype=torch.float32)
+            if x.ndim == 2:
+                x = x.unsqueeze(0)
+
+            B, T, C = x.shape
+            qkv = self.c_attn(x)
+            q, k, v = qkv.split(self.d_model, dim=2)
+
+            k = k.view(B, T, self.num_heads, self.d_k).transpose(1, 2)
+            q = q.view(B, T, self.num_heads, self.d_k).transpose(1, 2)
+            v = v.view(B, T, self.num_heads, self.d_k).transpose(1, 2)
+
+            att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(self.d_k))
+            att = att.masked_fill(self.bias[:, :, :T, :T] == 0, float("-inf"))
+            weights = torch.softmax(att, dim=-1)
+            y = weights @ v
+            y = y.transpose(1, 2).contiguous().view(B, T, C)
+            out = self.c_proj(y)
+            if return_weights:
+                return out, weights
+            return out
+
+    class MLP(nn.Module):
+        """Feed-Forward Network with GELU activation (PyTorch)."""
+
+        def __init__(self, d_model: int = 64, expansion: int = 4, seed: int = 42):
+            super().__init__()
+            torch.manual_seed(seed + 10)
+            self.c_fc = nn.Linear(d_model, expansion * d_model)
+            self.gelu = nn.GELU()
+            self.c_proj = nn.Linear(expansion * d_model, d_model)
+
+        def forward(self, x):
+            return self.c_proj(self.gelu(self.c_fc(x)))
+
+    class TransformerBlock(nn.Module):
+        """Pre-LN Transformer Block containing Causal Attention and MLP (PyTorch)."""
+
+        def __init__(self, d_model: int = 64, num_heads: int = 4, max_len: int = 512, seed: int = 42):
+            super().__init__()
+            self.d_model = d_model
+            self.num_heads = num_heads
+            self.ln_1 = nn.LayerNorm(d_model)
+            self.attn = CausalSelfAttention(d_model, num_heads, max_len=max_len, seed=seed)
+            self.ln_2 = nn.LayerNorm(d_model)
+            self.mlp = MLP(d_model, seed=seed)
+
+        def forward(self, x):
+            x = x + self.attn(self.ln_1(x))
+            x = x + self.mlp(self.ln_2(x))
+            return x
+
+else:
+    class LayerNorm:
+        """Layer Normalization across the feature dimension."""
+
+        def __init__(self, d_model: int, eps: float = 1e-5):
+            self.d_model = d_model
+            self.eps = eps
+            self.gamma = [1.0] * d_model
+            self.beta = [0.0] * d_model
+
+        def forward(self, x_3d: list | SimpleTensor) -> SimpleTensor:
+            import math
+            raw_x = x_3d.data if isinstance(x_3d, SimpleTensor) else x_3d
+            out = []
+            for batch in raw_x:
+                b_out = []
+                for vec in batch:
+                    mean = sum(vec) / self.d_model
+                    var = sum((v - mean) ** 2 for v in vec) / self.d_model
+                    std = math.sqrt(var + self.eps)
+                    normed = [(v - mean) / std * g + b for v, g, b in zip(vec, self.gamma, self.beta)]
+                    b_out.append(normed)
+                out.append(b_out)
+            return SimpleTensor(out)
+
+        def __call__(self, x_3d) -> SimpleTensor:
+            return self.forward(x_3d)
+
+    class CausalSelfAttention:
+        """Multi-head Causal Self-Attention mechanism built from scratch."""
+
+        def __init__(self, d_model: int = 64, num_heads: int = 4, max_len: int = 512, seed: int = 42):
+            assert d_model % num_heads == 0, "d_model must be divisible by num_heads"
+            self.d_model = d_model
+            self.num_heads = num_heads
+            self.d_k = d_model // num_heads
+            self.max_len = max_len
+
+            rng = random.Random(seed)
+            std = 0.02
+            self.w_q = [[rng.gauss(0, std) for _ in range(d_model)] for _ in range(d_model)]
+            self.w_k = [[rng.gauss(0, std) for _ in range(d_model)] for _ in range(d_model)]
+            self.w_v = [[rng.gauss(0, std) for _ in range(d_model)] for _ in range(d_model)]
+            self.w_o = [[rng.gauss(0, std) for _ in range(d_model)] for _ in range(d_model)]
+
+        def forward(self, x: list | SimpleTensor, return_weights: bool = False):
+            import math
+            raw_x = x.data if isinstance(x, SimpleTensor) else x
+            if not isinstance(raw_x[0], list):
+                raw_x = [raw_x]
+            if not isinstance(raw_x[0][0], list):
+                raw_x = [raw_x]
+
+            B = len(raw_x)
+            T = len(raw_x[0])
+            D = self.d_model
+            H = self.num_heads
+            d_k = self.d_k
+            scale = 1.0 / math.sqrt(d_k)
+
+            all_heads_out = []
+            all_head_weights = []
+
+            for b in range(B):
+                seq = raw_x[b]  # (T, D)
+                Q = matmul_2d(seq, self.w_q)
+                K = matmul_2d(seq, self.w_k)
+                V = matmul_2d(seq, self.w_v)
+
+                batch_attn_out = [[0.0] * D for _ in range(T)]
+                b_weights = []
+
+                for h in range(H):
+                    start = h * d_k
+                    end = start + d_k
+                    Q_h = [row[start:end] for row in Q]
+                    K_h = [row[start:end] for row in K]
+                    V_h = [row[start:end] for row in V]
+
+                    head_w = []
+                    for i in range(T):
+                        row_scores = []
+                        q_i = Q_h[i]
+                        for j in range(T):
+                            if j > i:
+                                row_scores.append(-1e9)  # Causal mask: no future information
+                            else:
+                                dot = sum(q_i[k] * K_h[j][k] for k in range(d_k))
+                                row_scores.append(dot * scale)
+
+                        weights_i = softmax_1d(row_scores)
+                        head_w.append(weights_i)
+
+                        # Weighted sum over values
+                        v_out_i = [0.0] * d_k
+                        for j in range(i + 1):
+                            w = weights_i[j]
+                            v_j = V_h[j]
+                            for k in range(d_k):
+                                v_out_i[k] += w * v_j[k]
+
+                        for k in range(d_k):
+                            batch_attn_out[i][start + k] = v_out_i[k]
+
+                    b_weights.append(head_w)
+
+                projected = matmul_2d(batch_attn_out, self.w_o)
+                all_heads_out.append(projected)
+                all_head_weights.append(b_weights)
+
+            out_tensor = SimpleTensor(all_heads_out)
+            weights_tensor = SimpleTensor(all_head_weights)
+            if return_weights:
+                return out_tensor, weights_tensor
+            return out_tensor
+
+        def __call__(self, x, return_weights: bool = False):
+            return self.forward(x, return_weights=return_weights)
+
+    class MLP:
+        """Position-wise Feed-Forward Network with GELU activation."""
+
+        def __init__(self, d_model: int = 64, expansion: int = 4, seed: int = 42):
+            self.d_model = d_model
+            d_ff = d_model * expansion
+            rng = random.Random(seed + 10)
+            std = 0.02
+            self.w1 = [[rng.gauss(0, std) for _ in range(d_ff)] for _ in range(d_model)]
+            self.b1 = [0.0] * d_ff
+            self.w2 = [[rng.gauss(0, std) for _ in range(d_model)] for _ in range(d_ff)]
+            self.b2 = [0.0] * d_model
+
+        def forward(self, x_3d: list | SimpleTensor) -> SimpleTensor:
+            raw_x = x_3d.data if isinstance(x_3d, SimpleTensor) else x_3d
+            out = []
+            for batch in raw_x:
+                h1 = matmul_2d(batch, self.w1)
+                for row in h1:
+                    for j in range(len(row)):
+                        row[j] = gelu(row[j] + self.b1[j])
+                h2 = matmul_2d(h1, self.w2)
+                for row in h2:
+                    for j in range(len(row)):
+                        row[j] += self.b2[j]
+                out.append(h2)
+            return SimpleTensor(out)
+
+        def __call__(self, x_3d) -> SimpleTensor:
+            return self.forward(x_3d)
+
+    class TransformerBlock:
+        """Assembled Pre-LN Transformer Block combining Causal Self-Attention and MLP."""
+
+        def __init__(self, d_model: int = 64, num_heads: int = 4, max_len: int = 512, seed: int = 42):
+            self.d_model = d_model
+            self.num_heads = num_heads
+            self.ln1 = LayerNorm(d_model)
+            self.attn = CausalSelfAttention(d_model, num_heads=num_heads, max_len=max_len, seed=seed)
+            self.ln2 = LayerNorm(d_model)
+            self.mlp = MLP(d_model, expansion=4, seed=seed)
+
+        def forward(self, x: list | SimpleTensor) -> SimpleTensor:
+            raw_x = x.data if isinstance(x, SimpleTensor) else x
+            # 1. Pre-LN Attention residual connection
+            norm1 = self.ln1(raw_x)
+            attn_out = self.attn(norm1)
+            raw_attn = attn_out.data if isinstance(attn_out, SimpleTensor) else attn_out
+
+            B = len(raw_x)
+            T = len(raw_x[0])
+            D = self.d_model
+            h1 = [[[raw_x[b][t][d] + raw_attn[b][t][d] for d in range(D)] for t in range(T)] for b in range(B)]
+
+            # 2. Pre-LN MLP residual connection
+            norm2 = self.ln2(h1)
+            mlp_out = self.mlp(norm2)
+            raw_mlp = mlp_out.data if isinstance(mlp_out, SimpleTensor) else mlp_out
+
+            h2 = [[[h1[b][t][d] + raw_mlp[b][t][d] for d in range(D)] for t in range(T)] for b in range(B)]
+            return SimpleTensor(h2)
+
+        def __call__(self, x) -> SimpleTensor:
+            return self.forward(x)
 
 
 # ==============================================================================

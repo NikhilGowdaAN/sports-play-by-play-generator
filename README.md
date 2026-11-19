@@ -18,7 +18,7 @@ Tick these off as you go, and commit after each one.
       Hint: Raw text input preparation.
 - [x] **2. Implement the byte-pair tokenizer and create embeddings from the sports text.**  
       Hint: Byte-pair tokenizer and embeddings.
-- [ ] **3. Build the causal self-attention mechanism and assemble the transformer block.**  
+- [x] **3. Build the causal self-attention mechanism and assemble the transformer block.**  
       Hint: Causal self-attention and transformer block assembly.
 - [ ] **4. Train the GPT model using the sports text data.**  
       Hint: Model training.
