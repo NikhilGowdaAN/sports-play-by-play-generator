@@ -118,6 +118,19 @@ def prepare_corpus(source: str | Path | None = None, clean: bool = True) -> str:
     return raw_text
 
 
+class MilestoneResult(dict):
+    """Dictionary subclass supporting attribute access (e.g. res.tokenizer or res['tokenizer'])."""
+
+    def __getattr__(self, name):
+        try:
+            return self[name]
+        except KeyError:
+            raise AttributeError(f"'MilestoneResult' object has no attribute '{name}'")
+
+    def __setattr__(self, name, value):
+        self[name] = value
+
+
 def milestone_1(corpus_path: str | Path | None = None) -> str:
     """Milestone 1: Gather a small corpus of sports commentary or news articles.
 
@@ -156,7 +169,7 @@ def milestone_2(corpus_text: str | None = None, vocab_size: int = 320, embed_dim
     sample_tokens = tokenizer.encode(sample_text)
     sample_embeddings = embeddings(sample_tokens)
 
-    return {
+    return MilestoneResult({
         "tokenizer": tokenizer,
         "embeddings": embeddings,
         "sample_text": sample_text,
@@ -165,7 +178,7 @@ def milestone_2(corpus_text: str | None = None, vocab_size: int = 320, embed_dim
         "vocab_size": actual_vocab_size,
         "embed_dim": embed_dim,
         "shape": sample_embeddings.shape,
-    }
+    })
 
 
 class BPETokenizer:
@@ -367,6 +380,8 @@ if HAS_TORCH:
             self.embedding = nn.Embedding(vocab_size, embed_dim)
 
         def forward(self, idx):
+            if isinstance(idx, SimpleTensor):
+                idx = idx.data
             if isinstance(idx, list):
                 idx = torch.tensor(idx, dtype=torch.long)
             return self.embedding(idx)
@@ -382,6 +397,8 @@ if HAS_TORCH:
             self.embedding = nn.Embedding(max_len, embed_dim)
 
         def forward(self, seq_len: int):
+            if seq_len > self.max_len:
+                raise ValueError(f"Sequence length {seq_len} exceeds max_len {self.max_len}")
             positions = torch.arange(0, seq_len, dtype=torch.long)
             return self.embedding(positions).unsqueeze(0)
 
@@ -397,6 +414,8 @@ if HAS_TORCH:
             self.pos_emb = PositionalEmbedding(max_len, embed_dim, seed=seed)
 
         def forward(self, idx):
+            if isinstance(idx, SimpleTensor):
+                idx = idx.data
             if isinstance(idx, list):
                 if idx and isinstance(idx[0], int):
                     idx = [idx]
@@ -404,6 +423,8 @@ if HAS_TORCH:
             elif isinstance(idx, torch.Tensor) and idx.ndim == 1:
                 idx = idx.unsqueeze(0)
             B, T = idx.shape
+            if T > self.max_len:
+                raise ValueError(f"Sequence length {T} exceeds max_len {self.max_len}")
             tok_vecs = self.tok_emb(idx)
             pos_vecs = self.pos_emb(T)
             return tok_vecs + pos_vecs
@@ -515,7 +536,7 @@ def milestone_3(embeddings_input=None, embed_dim: int = 64, num_heads: int = 4) 
     input_shape = getattr(embeddings_input, "shape", (len(embeddings_input), len(embeddings_input[0]), len(embeddings_input[0][0])))
     output_shape = getattr(block_out, "shape", (len(block_out), len(block_out[0]), len(block_out[0][0])))
 
-    return {
+    return MilestoneResult({
         "block": block,
         "attention": attention,
         "input_embeddings": embeddings_input,
@@ -528,7 +549,7 @@ def milestone_3(embeddings_input=None, embed_dim: int = 64, num_heads: int = 4) 
         "num_heads": num_heads,
         "causal_mask_verified": causal_mask_verified,
         "residual_verified": (input_shape == output_shape),
-    }
+    })
 
 
 def gelu(x: float) -> float:
@@ -568,10 +589,18 @@ if HAS_TORCH:
 
         def __init__(self, d_model: int, eps: float = 1e-5):
             super().__init__()
+            self.d_model = d_model
             self.ln = nn.LayerNorm(d_model, eps=eps)
 
         def forward(self, x):
+            if isinstance(x, SimpleTensor):
+                x = torch.tensor(x.data, dtype=torch.float32)
+            elif isinstance(x, list):
+                x = torch.tensor(x, dtype=torch.float32)
             return self.ln(x)
+
+        def __call__(self, x):
+            return self.forward(x)
 
     class CausalSelfAttention(nn.Module):
         """Multi-head Causal Self-Attention mechanism (PyTorch)."""
@@ -617,6 +646,9 @@ if HAS_TORCH:
                 return out, weights
             return out
 
+        def __call__(self, x, return_weights: bool = False):
+            return self.forward(x, return_weights=return_weights)
+
     class MLP(nn.Module):
         """Feed-Forward Network with GELU activation (PyTorch)."""
 
@@ -628,7 +660,14 @@ if HAS_TORCH:
             self.c_proj = nn.Linear(expansion * d_model, d_model)
 
         def forward(self, x):
+            if isinstance(x, SimpleTensor):
+                x = torch.tensor(x.data, dtype=torch.float32)
+            elif isinstance(x, list):
+                x = torch.tensor(x, dtype=torch.float32)
             return self.c_proj(self.gelu(self.c_fc(x)))
+
+        def __call__(self, x):
+            return self.forward(x)
 
     class TransformerBlock(nn.Module):
         """Pre-LN Transformer Block containing Causal Attention and MLP (PyTorch)."""
@@ -643,9 +682,16 @@ if HAS_TORCH:
             self.mlp = MLP(d_model, seed=seed)
 
         def forward(self, x):
+            if isinstance(x, SimpleTensor):
+                x = torch.tensor(x.data, dtype=torch.float32)
+            elif isinstance(x, list):
+                x = torch.tensor(x, dtype=torch.float32)
             x = x + self.attn(self.ln_1(x))
             x = x + self.mlp(self.ln_2(x))
             return x
+
+        def __call__(self, x):
+            return self.forward(x)
 
 else:
     class LayerNorm:
@@ -885,7 +931,7 @@ def milestone_4(corpus_text: str | None = None, steps: int = 20, embed_dim: int 
     # Evaluate final loss on reference chunk
     _, final_loss = model.forward(x_train, targets=y_train)
 
-    return {
+    return MilestoneResult({
         "model": model,
         "tokenizer": tokenizer,
         "initial_loss": float(initial_loss),
@@ -896,7 +942,7 @@ def milestone_4(corpus_text: str | None = None, steps: int = 20, embed_dim: int 
         "vocab_size": actual_vocab_size,
         "embed_dim": embed_dim,
         "training_verified": (final_loss < initial_loss),
-    }
+    })
 
 
 if HAS_TORCH:
@@ -919,6 +965,8 @@ if HAS_TORCH:
             self.optimizer = torch.optim.AdamW(self.parameters(), lr=1e-3)
 
         def forward(self, idx, targets=None):
+            if isinstance(idx, SimpleTensor):
+                idx = idx.data
             if isinstance(idx, list):
                 if idx and isinstance(idx[0], int):
                     idx = [idx]
@@ -935,6 +983,8 @@ if HAS_TORCH:
             if targets is None:
                 return logits
 
+            if isinstance(targets, SimpleTensor):
+                targets = targets.data
             if isinstance(targets, list):
                 if targets and isinstance(targets[0], int):
                     targets = [targets]
@@ -947,11 +997,46 @@ if HAS_TORCH:
 
         def train_step(self, x_tokens, y_targets, lr=1e-3):
             self.train()
+            for param_group in self.optimizer.param_groups:
+                param_group["lr"] = lr
             self.optimizer.zero_grad()
             logits, loss = self.forward(x_tokens, targets=y_targets)
             loss.backward()
             self.optimizer.step()
             return loss.item()
+
+        def to_dict(self) -> dict:
+            return {
+                "vocab_size": self.vocab_size,
+                "embed_dim": self.embed_dim,
+                "num_heads": self.num_heads,
+                "num_layers": self.num_layers,
+                "max_len": self.max_len,
+                "state_dict": {k: v.cpu().tolist() for k, v in self.state_dict().items()},
+            }
+
+        @classmethod
+        def from_dict(cls, data: dict) -> "SportsGPT":
+            m = cls(
+                vocab_size=data["vocab_size"],
+                embed_dim=data["embed_dim"],
+                num_heads=data["num_heads"],
+                num_layers=data["num_layers"],
+                max_len=data["max_len"],
+            )
+            state_dict = {k: torch.tensor(v) for k, v in data["state_dict"].items()}
+            m.load_state_dict(state_dict)
+            return m
+
+        def save(self, file_path: str | Path) -> None:
+            path = Path(file_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(self.to_dict()), encoding="utf-8")
+
+        @classmethod
+        def load(cls, file_path: str | Path) -> "SportsGPT":
+            data = json.loads(Path(file_path).read_text(encoding="utf-8"))
+            return cls.from_dict(data)
 
 else:
     class SportsGPT:

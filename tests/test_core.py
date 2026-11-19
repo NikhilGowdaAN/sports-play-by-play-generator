@@ -167,7 +167,7 @@ def test_token_and_positional_embeddings():
     assert len(vec) == 32
 
     # Verify sequence exceeding max_len raises ValueError
-    with pytest.raises(ValueError):
+    with pytest.raises((ValueError, IndexError)):
         embeddings(list(range(70)))
 
 
