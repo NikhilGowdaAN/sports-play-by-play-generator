@@ -9,4 +9,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
-      - run: pytest -q
+      - run: |
+          pytest -v --tb=short || {
+            python -c "import subprocess; res = subprocess.run(['pytest', '-q'], capture_output=True, text=True); print('::error::' + res.stdout.replace('\n', '%0A'))"
+            exit 1
+          }
