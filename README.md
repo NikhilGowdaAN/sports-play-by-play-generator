@@ -14,7 +14,7 @@ This project guides you through building a GPT model from scratch to create a co
 
 Tick these off as you go, and commit after each one.
 
-- [ ] **1. Gather a small corpus of sports commentary or news articles.**  
+- [x] **1. Gather a small corpus of sports commentary or news articles.**  
       Hint: Raw text input preparation.
 - [ ] **2. Implement the byte-pair tokenizer and create embeddings from the sports text.**  
       Hint: Byte-pair tokenizer and embeddings.
