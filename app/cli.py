@@ -1,6 +1,6 @@
 """Command-line entry point: `python -m app.cli --help`."""
 import argparse
-from app.core import milestone_1, get_corpus_stats
+from app.core import milestone_1, milestone_2, get_corpus_stats, BPETokenizer, SportsEmbeddings
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -14,7 +14,14 @@ def main(argv: list[str] | None = None) -> None:
     corpus_parser = sub.add_parser("corpus", help="view sports commentary corpus details and preview")
     corpus_parser.add_argument("--preview", action="store_true", help="show sample commentary preview")
 
-    # TODO: add your own commands here as you work through the milestones.
+    tokenize_parser = sub.add_parser("tokenize", help="tokenize sports text using the BPE tokenizer")
+    tokenize_parser.add_argument("text", help="sports commentary text to tokenize")
+    tokenize_parser.add_argument("--vocab-size", type=int, default=320, help="target vocabulary size")
+
+    embed_parser = sub.add_parser("embed", help="generate token and positional embeddings for sports text")
+    embed_parser.add_argument("text", help="sports commentary text to embed")
+    embed_parser.add_argument("--embed-dim", type=int, default=64, help="embedding dimension")
+
     args = parser.parse_args(argv)
     if args.command == "hello":
         print("Sports Play-by-Play Generator is ready. Open README.md for your milestones.")
@@ -32,6 +39,27 @@ def main(argv: list[str] | None = None) -> None:
             print("-" * 40)
             sample = corpus[:350]
             print(f"{sample}...")
+    elif args.command == "tokenize":
+        corpus = milestone_1()
+        tokenizer = BPETokenizer()
+        tokenizer.train(corpus, vocab_size=args.vocab_size)
+        tokens = tokenizer.encode(args.text)
+        decoded = tokenizer.decode(tokens)
+        print(f"Input text:     '{args.text}'")
+        print(f"UTF-8 Bytes:    {len(args.text.encode('utf-8'))}")
+        print(f"Token count:    {len(tokens)}")
+        print(f"Token IDs:      {tokens}")
+        print(f"Decoded match:  {decoded == args.text}")
+    elif args.command == "embed":
+        m2 = milestone_2(embed_dim=args.embed_dim)
+        tokenizer = m2["tokenizer"]
+        embeddings = m2["embeddings"]
+        tokens = tokenizer.encode(args.text)
+        emb = embeddings(tokens)
+        print(f"Input text:       '{args.text}'")
+        print(f"Token count:      {len(tokens)}")
+        print(f"Embedding shape:  {emb.shape}")
+        print(f"Embedding vector dimension: {args.embed_dim}")
 
 
 if __name__ == "__main__":
